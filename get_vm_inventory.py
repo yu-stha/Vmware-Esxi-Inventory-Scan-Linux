@@ -31,12 +31,17 @@ DISPLAY = ["ESXi", "Name", "PowerState", "DiskAllocatedGB", "Datastore", "Networ
 def ask(prompt):
     """Read a line from the terminal even if stdin is a pipe."""
     try:
-        with open("/dev/tty", "r+") as tty:
-            tty.write(prompt)
-            tty.flush()
-            return tty.readline().strip()
+        # Separate handles: a single "r+" text handle fails on a tty (not seekable)
+        with open("/dev/tty", "w") as out, open("/dev/tty", "r") as inp:
+            out.write(prompt)
+            out.flush()
+            return inp.readline().strip()
     except OSError:
+        pass
+    try:
         return input(prompt).strip()
+    except EOFError:
+        sys.exit("\nNo terminal available for prompts. Run it from an interactive shell.")
 
 
 def prompt_creds(label):
@@ -60,14 +65,18 @@ def ensure_pyvmomi():
     py = os.path.join(venv_dir, "bin", "python")
     print("pyvmomi not found. Installing it into %s (one-time)..." % venv_dir)
     try:
-        if not os.path.exists(py):
+        pip_ok = os.path.exists(py) and subprocess.call(
+            [py, "-m", "pip", "--version"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) == 0
+        if not pip_ok:  # missing, or half-created by an earlier failed attempt
             subprocess.check_call([sys.executable, "-m", "venv", "--clear", venv_dir])
         subprocess.check_call([py, "-m", "pip", "install", "--quiet", "pyvmomi"])
     except (subprocess.CalledProcessError, OSError) as exc:
         sys.exit(
             "Could not install pyvmomi automatically (%s).\n"
             "On Debian/Ubuntu install the venv module first:  sudo apt install python3-venv\n"
-            "Or install pyvmomi yourself:  pip install --user pyvmomi" % exc
+            "(if apt asks for a versioned package, use e.g. python3.14-venv; note: venv, not env)\n"
+            "Or install pyvmomi from apt:  sudo apt install python3-pyvmomi" % exc
         )
 
     for site in glob.glob(os.path.join(venv_dir, "lib", "python3*", "site-packages")):
@@ -267,4 +276,3 @@ if __name__ == "__main__":
         main()
     except KeyboardInterrupt:
         sys.exit("\nCancelled.")
-
